@@ -8,7 +8,42 @@ module LoginService
       query += "        <#{MU_ACCOUNT.status}> <#{MU_ACCOUNT['status/active']}> ; "
       query += "        <#{MU_ACCOUNT.password}> ?password ; "
       query += "        <#{MU_ACCOUNT.salt}> ?salt ; "
-      query += "        <#{MU_CORE.uuid}> ?uuid"
+      query += "        <#{MU_CORE.uuid}> ?uuid . "
+      query += " }"
+      query(query)
+    end
+
+    def insert_account_github(nickname, accountServiceHomepage, name, email, location)
+      uuid = generate_uuid()
+      uri = "http://mu.semte.ch/ext/onlineAccounts/" + uuid
+      uuidAgent = generate_uuid()
+      uriAgent = "http://mu.semte.ch/ext/agents/" + uuidAgent
+      update = "INSERT DATA { "
+      update += "GRAPH <#{settings.graph}> { "
+      update += "<#{uri}> a <#{RDF::Vocab::FOAF.OnlineAccount}> ; "
+      update += "<#{RDF::Vocab::FOAF.accountName}> #{nickname.downcase.sparql_escape} ; "
+      update += "<#{RDF::Vocab::FOAF.accountServiceHomepage}> \"#{accountServiceHomepage}\" ;"
+      update += "        <#{MU_ACCOUNT.status}> <#{MU_ACCOUNT['status/active']}> ; "
+      update += "        <#{MU_CORE.uuid}> \"#{uuid}\" . "
+      update += "<#{uriAgent}> a <#{RDF::Vocab::FOAF.Agent}> ; "
+      update += "<#{RDF::Vocab::FOAF.name}> \"#{name}\" ;"
+      update += "<#{RDF::Vocab::FOAF.mbox}> \"#{email}\" ;"
+      update += "<http://example.com/location> \"#{location}\" ;"
+      update += "        <#{MU_CORE.uuid}> \"#{uuidAgent}\" ; "
+      update += "<#{RDF::Vocab::FOAF.account}> <#{uri}> . } }"
+      update(update)
+      {
+        uuid: uuid,
+        uri: uri
+      }
+    end
+
+    def select_account_github(nickname)
+      query =  " SELECT ?uuid ?uri FROM <#{settings.graph}> WHERE {"
+      query += "   ?uri a <#{RDF::Vocab::FOAF.OnlineAccount}> ; "
+      query += "        <#{RDF::Vocab::FOAF.accountName}> #{nickname.downcase.sparql_escape} ; "
+      query += "        <#{MU_ACCOUNT.status}> <#{MU_ACCOUNT['status/active']}> ; "
+      query += "        <#{MU_CORE.uuid}> ?uuid . "
       query += " }"
       query(query)
     end

@@ -1,4 +1,7 @@
 require 'bcrypt'
+require 'net/http'
+require 'uri'
+require 'json'
 require_relative 'login_service/sparql_queries.rb'
 
 configure do
@@ -21,10 +24,7 @@ MU_SESSION = RDF::Vocabulary.new(MU.to_uri.to_s + 'session/')
 #         400 if session header is missing
 #         400 on login failure (incorrect user/password or inactive account)
 ###
-post '/sessions/?' do
-  content_type 'application/vnd.api+json'
-
-
+post '/sessions/github/?' do
   ###
   # Validate headers
   ###
@@ -32,44 +32,64 @@ post '/sessions/?' do
 
   session_uri = session_id_header(request)
   error('Session header is missing') if session_uri.nil?
-  
+
   rewrite_url = rewrite_url_header(request)
   error('X-Rewrite-URL header is missing') if rewrite_url.nil?
 
-
   ###
-  # Validate request
+  # Validate request and obtain username and password @ github
   ###
+  payload = {
+    "client_id" => ENV['GITHUB_CLIENT_ID'],
+    "client_secret" => ENV['GITHUB_CLIENT_SECRET'],
+    "code" => @json_body['authorizationCode']
+  }
 
-  data = @json_body['data']
-  attributes = data['attributes']
+  uri = URI.parse(ENV['GITHUB_OAUTH_URL'] + "/login/oauth/access_token")
 
-  validate_resource_type('sessions', data)
-  error('Id paramater is not allowed', 403) if not data['id'].nil?
+  header = {
+       "Content-Type" => "application/json",
+       "Accept" => "application/json"
+  }
 
-  error('Nickname is required') if attributes['nickname'].nil?
-  error('Password is required') if attributes['password'].nil?
+  http = Net::HTTP.new(uri.host, uri.port)
+  http.use_ssl = true
+  request = Net::HTTP::Post.new(uri.request_uri, header)
+  request.body = payload.to_json
 
-  ###
-  # Validate login
-  ###
+  # get a valid access token from the github website
+  response = http.request(request)
+  responseHash = JSON.parse(response.body)
 
-  result = select_salted_password_and_salt_by_nickname(attributes['nickname'])
+  accessToken = responseHash['access_token']
+  tokenType = responseHash['token_type']
 
-  error('This combination of username and password cannot be found.') if result.empty?
- 
-  account = result.first
-  db_password = BCrypt::Password.new account[:password].to_s
-  password = attributes['password'] + settings.salt + account[:salt].to_s
+  user_response = Net::HTTP.get_response(URI(ENV['GITHUB_OAUTH_API_URL'] + "/user?access_token=" + accessToken))
+  user_json = JSON.parse(user_response.body)
 
-  error('This combination of username and password cannot be found.') unless db_password == password
+  status 200
 
+  # ###
+  # # Validate login
+  # ###
+  account = nil
+
+  result = select_account_github(user_json['login'])
+
+  if result.empty?
+    account = insert_account_github(user_json['login'],
+                          user_json['html_url'],
+                          user_json['name'],
+                          user_json['email'],
+                          user_json['location'])
+  else
+    account = result.first
+  end
 
   ###
   # Remove old sessions
   ###
   remove_old_sessions(session_uri)
-
 
   ###
   # Insert new session
@@ -101,7 +121,6 @@ post '/sessions/?' do
     }
   }.to_json
 end
-
 
 ###
 # DELETE /sessions/current
